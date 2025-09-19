@@ -29,8 +29,25 @@ export function ResearchTab(props: any) {
         </div>
         {props.hasTitles && (
           <div className="mt-2">
-            <h3 className="font-semibold mb-2">Suggested Titles <span className="text-xs text-slate-400">(single-select required)</span></h3>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-semibold">SEO-Optimized Titles <span className="text-xs text-slate-400">(single-select required)</span></h3>
+              <div className="text-xs text-slate-400 bg-slate-800/50 px-2 py-1 rounded-lg">
+                <span className="text-green-400">●</span> Green: 80+ | <span className="text-yellow-400">●</span> Yellow: 65-79 | <span className="text-orange-400">●</span> Orange: 50-64
+              </div>
+            </div>
             <TitleList options={props.titleOptions} selected={props.selectedTitle} onSelect={props.onSelectTitle} />
+            
+            <div className="mt-4 p-3 bg-slate-800/40 rounded-xl border border-slate-700">
+              <h4 className="text-sm font-semibold text-sky-400 mb-2">💡 Amazon KDP SEO Tips</h4>
+              <ul className="text-xs text-slate-300 space-y-1">
+                <li>• <strong>Optimal length:</strong> 30-60 characters for best visibility</li>
+                <li>• <strong>Power words:</strong> "Complete", "Ultimate", "Essential" boost click-through rates</li>
+                <li>• <strong>Numbers:</strong> Specific numbers (7, 10, 21) increase engagement</li>
+                <li>• <strong>How-To format:</strong> High search volume and clear value proposition</li>
+                <li>• <strong>Target audience:</strong> "for Beginners" helps Amazon categorize your book</li>
+                <li>• <strong>Benefits:</strong> Focus on what readers will achieve or learn</li>
+              </ul>
+            </div>
           </div>
         )}
         <div className="flex justify-between items-center mt-4">

@@ -4,7 +4,9 @@ import type { TabKey, StyleSettings } from '@types'
 import { Text } from '@lib/text'
 import { Titles } from '@lib/titles'
 import { Images } from '@lib/images'
+import { performComprehensiveResearch, type ResearchProgress, type MasterSummary } from '@lib/research'
 import { ProgressPanel } from '@components/ProgressPanel'
+import { ResearchProgress as ResearchProgressComponent } from '@components/ResearchProgress'
 import { runSmoke } from '@dev/smokeTests'
 
 const ResearchTab = React.lazy(() => import('@tabs/ResearchTab').then(m => ({ default: m.ResearchTab })))
@@ -37,6 +39,7 @@ export default function App() {
 
   const [titleOptions, setTitleOptions] = useState<string[]>([])
   const [selectedTitle, setSelectedTitle] = useState<string|null>(null)
+  const [regenerationCount, setRegenerationCount] = useState(0)
   const [outline, setOutline] = useState<string[]>([])
   const [sample, setSample] = useState('')
   const [status, setStatus] = useState<string[]>([])
@@ -50,21 +53,45 @@ export default function App() {
   const [interiors, setInteriors] = useState<string[]>([])
   const [interiorCount, setInteriorCount] = useState(3)
 
+  // Research state
+  const [researchProgress, setResearchProgress] = useState<ResearchProgress | null>(null)
+  const [masterSummaries, setMasterSummaries] = useState<MasterSummary[]>([])
+  const [isResearching, setIsResearching] = useState(false)
+
+  // Writing state
+  const [chapters, setChapters] = useState<Record<string, string>>({})
+  const [selectedChapter, setSelectedChapter] = useState<string | null>(null)
+  const [isEditingChapter, setIsEditingChapter] = useState(false)
+
   const [style, setStyle] = useState<StyleSettings>({ fontFamily:'serif', fontSizePt:11, lineHeight:1.5, accentHex:'#0ea5e9', textHex:'#111827' })
 
   const hasSubject = useMemo(()=> topic.trim().length>0, [topic])
   const hasTitles = titleOptions.length>0
 
   useEffect(()=>{ if(!isRunning) return; const id=setInterval(()=> setHeartbeat(`Heartbeat: ${new Date().toLocaleTimeString()}`), 5000); return ()=>clearInterval(id); }, [isRunning])
-  useEffect(()=>{ if(!hasSaved || !sample) return; const first = Text.firstPageMarkdown(sample, 400); setKdpHtml(Text.makeKdpPage(first, style, topic, authorName, publisherName)); }, [style, authorName, publisherName, topic, hasSaved, sample])
+  useEffect(()=>{ 
+    if(!hasSaved || !sample) return; 
+    const first = Text.firstPageMarkdown(sample, 400); 
+    setKdpHtml(Text.makeKdpPage(first, style, topic, authorName, publisherName)); 
+  }, [style, authorName, publisherName, topic, hasSaved, sample])
   useEffect(()=>{ runSmoke() }, [])
 
   const addStatus = (s:string)=> setStatus(v=>[...v,s])
   const tick = ()=> new Promise(r=> setTimeout(r, speedMode?200:600))
   const resetOutputs = ()=>{ setOutline([]); setSample(''); setStatus([]); setProgress(0); setKdpHtml(''); setHeartbeat(''); }
-  const resetAll = ()=>{ resetOutputs(); setTopic(''); setBatchText(''); setTitleOptions([]); setSelectedTitle(null); setAuthorName(''); setPublisherName(''); setIsFiction(false); setTonePct(50); setSpeedMode(False); setWordTarget(1100); setCoverFrontSvg(''); setCoverBackSvg(''); setInteriors([]); setInteriorCount(3); setHasSaved(False); setActiveTab('research'); }
+  const resetAll = ()=>{ resetOutputs(); setTopic(''); setBatchText(''); setTitleOptions([]); setSelectedTitle(null); setRegenerationCount(0); setAuthorName(''); setPublisherName(''); setIsFiction(false); setTonePct(50); setSpeedMode(false); setWordTarget(1100); setCoverFrontSvg(''); setCoverBackSvg(''); setInteriors([]); setInteriorCount(3); setHasSaved(false); setResearchProgress(null); setMasterSummaries([]); setIsResearching(false); setChapters({}); setSelectedChapter(null); setIsEditingChapter(false); setActiveTab('research'); }
 
-  const onGenerateTitles = ()=>{ const s = Titles.suggestTitles(topic); setTitleOptions(s); setSelectedTitle(null); }
+  const onGenerateTitles = ()=>{ 
+    setTitleOptions([]); // Clear existing titles first
+    setSelectedTitle(null); // Clear selected title
+    // Increment regeneration count for variety
+    setRegenerationCount(prev => prev + 1);
+    // Add a small delay to ensure UI updates before generating new titles
+    setTimeout(() => {
+      const s = Titles.suggestTitles(topic, regenerationCount + 1); 
+      setTitleOptions(s); 
+    }, 100);
+  }
   const onSelectTitle = (t:string)=>{ setSelectedTitle(prev=> prev===t ? null : t); setTonePct(Titles.toneFromTitle(t)); }
 
   const canSaveCore = useMemo(()=> mode==='single' ? hasSubject : batchText.trim().length>0, [mode, hasSubject, batchText])
@@ -76,20 +103,88 @@ export default function App() {
     const candidate = selectedTitle || titleOptions[0] || subject || 'Untitled'
     const derived = Titles.deriveOutlineFromTitle(candidate, subject, isFiction); setOutline(derived); await tick()
 
-    setProgress(60); addStatus('Drafting sample chapter...')
-    const words = speedMode?350:wordTarget; const chosen = selectedTitle || titleOptions[0] || derived[0] || candidate
-    const ch0 = writeChapter(chosen, subject, words); setSample(ch0); await tick()
-
-    setProgress(90); addStatus('Rendering page preview (first page)...')
-    const first = Text.firstPageMarkdown(ch0, 400); setKdpHtml(Text.makeKdpPage(first, style, topic, authorName, publisherName)); await tick()
+    setProgress(40); addStatus('Generating expert chapters...')
+    const words = speedMode?350:wordTarget
+    const newChapters: Record<string, string> = {}
+    
+    // Generate content for each chapter in the outline
+    for (let i = 0; i < derived.length; i++) {
+      const chapterTitle = derived[i]
+      addStatus(`Creating chapter: ${chapterTitle}`)
+      const chapterContent = await Text.composeExpertChapter(
+        chapterTitle, 
+        subject, 
+        words, 
+        isFiction, 
+        tonePct, 
+        masterSummaries
+      )
+      newChapters[chapterTitle] = chapterContent
+      await tick()
+    }
+    
+    setChapters(newChapters)
+    setSelectedChapter(derived[0]) // Select first chapter by default
+    
+    setProgress(90); addStatus('Finalizing content...')
+    const firstChapter = newChapters[derived[0]] || ''
+    setSample(firstChapter)
+    await tick()
 
     setProgress(100); addStatus('Done.'); setIsRunning(false)
   }
 
   const handleSave = async ()=>{
-    if(!canSaveCore || isRunning || !selectedTitle) return; setHasSaved(true); setActiveTab('writing')
-    if(mode==='single'){ await runPipeline(topic.trim()); }
-    else { const lines = batchText.split('\n').map(l=>l.trim()).filter(Boolean); if(!lines.length) return; setTopic(lines[0]); await runPipeline(lines[0]); setBatchText(lines.slice(1).join('\n')); }
+    if(!canSaveCore || isRunning || !selectedTitle) return; 
+    setHasSaved(true); 
+    setIsResearching(true);
+    // Stay on research tab during research process
+    
+    // Start comprehensive research
+    try {
+      const researchQuery = mode === 'single' ? topic.trim() : batchText.split('\n')[0].trim()
+      const summaries = await performComprehensiveResearch(researchQuery, setResearchProgress)
+      setMasterSummaries(summaries)
+      
+      // Run the original pipeline after research completes
+      if(mode==='single'){ await runPipeline(topic.trim()); }
+      else { const lines = batchText.split('\n').map(l=>l.trim()).filter(Boolean); if(!lines.length) return; setTopic(lines[0]); await runPipeline(lines[0]); setBatchText(lines.slice(1).join('\n')); }
+    } catch (error) {
+      console.error('Research failed:', error)
+      addStatus('Research failed, continuing with basic pipeline')
+      // Continue with original pipeline even if research fails
+      if(mode==='single'){ await runPipeline(topic.trim()); }
+      else { const lines = batchText.split('\n').map(l=>l.trim()).filter(Boolean); if(!lines.length) return; setTopic(lines[0]); await runPipeline(lines[0]); setBatchText(lines.slice(1).join('\n')); }
+    } finally {
+      setIsResearching(false)
+    }
+  }
+
+  // Chapter management functions
+  const onSelectChapter = (chapterTitle: string) => {
+    setSelectedChapter(chapterTitle)
+    const chapterContent = chapters[chapterTitle] || ''
+    setSample(chapterContent)
+    setIsEditingChapter(false)
+  }
+  
+  const onEditChapter = () => {
+    setIsEditingChapter(true)
+  }
+  
+  const onSaveChapter = (newContent: string) => {
+    if (selectedChapter) {
+      setChapters(prev => ({
+        ...prev,
+        [selectedChapter]: newContent
+      }))
+      setSample(newContent)
+      setIsEditingChapter(false)
+    }
+  }
+  
+  const onCancelEdit = () => {
+    setIsEditingChapter(false)
   }
 
   const onGenCovers = ()=>{ const t = selectedTitle || titleOptions[0] || topic || 'Untitled'; setCoverFrontSvg(Images.coverSVG('front', t, authorName, publisherName, style)); setCoverBackSvg(Images.coverSVG('back', t, authorName, publisherName, style)); }
@@ -162,16 +257,34 @@ export default function App() {
               onGenerateTitles={onGenerateTitles}
               onSelectTitle={onSelectTitle}
               canSave={ (mode==='single'? hasSubject : batchText.trim().length>0) && !!selectedTitle }
-              isRunning={isRunning}
+              isRunning={isRunning || isResearching}
               onSave={handleSave}
-              onReset={()=>{ setHasSaved(false); setActiveTab('research'); setSelectedTitle(null); setTitleOptions([]); setOutline([]); setSample(''); setKdpHtml('') }}
+              onReset={resetAll}
             >
-              <ProgressPanel heartbeat={heartbeat} progress={progress} status={status} />
+              <div className="space-y-4">
+                <ProgressPanel heartbeat={heartbeat} progress={progress} status={status} />
+                <ResearchProgressComponent 
+                  progress={researchProgress} 
+                  isVisible={isResearching && researchProgress !== null} 
+                />
+              </div>
             </ResearchTab>
           )}
 
           {activeTab==='writing' && (
-            <WritingTab hasSaved={hasSaved} isRunning={isRunning} outline={outline} sample={sample} kdpHtml={kdpHtml} />
+            <WritingTab 
+              hasSaved={hasSaved} 
+              isRunning={isRunning} 
+              outline={outline} 
+              sample={sample} 
+              chapters={chapters}
+              selectedChapter={selectedChapter}
+              isEditingChapter={isEditingChapter}
+              onSelectChapter={onSelectChapter}
+              onEditChapter={onEditChapter}
+              onSaveChapter={onSaveChapter}
+              onCancelEdit={onCancelEdit}
+            />
           )}
 
           {activeTab==='images' && (
@@ -190,7 +303,16 @@ export default function App() {
           )}
 
           {activeTab==='tweaking' && (
-            <TweakingTab hasSaved={hasSaved} style={style} setStyle={setStyle} />
+            <TweakingTab 
+              hasSaved={hasSaved} 
+              style={style} 
+              setStyle={setStyle}
+              kdpHtml={kdpHtml}
+              sample={sample}
+              topic={topic}
+              authorName={authorName}
+              publisherName={publisherName}
+            />
           )}
 
           {activeTab==='export' && (
